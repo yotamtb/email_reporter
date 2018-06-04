@@ -136,7 +136,6 @@ if __name__ == '__main__':
             help='Upload the mails to a pre-defined S3 bucket'
         )
         args = parser.parse_args()
-        args.upload = True
         assert args.upload or args.download_path, \
             'You must provide a local path to download email messages or ' \
             'use --upload to upload files to S3 bucket'
