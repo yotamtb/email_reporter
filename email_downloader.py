@@ -5,6 +5,8 @@ import imaplib
 import os
 import sys
 
+import boto3
+
 import config
 
 # How many days back we need to fetch emails
@@ -69,7 +71,6 @@ def fetch_emails(email_account_obj):
                                           xrange(
                                               num_of_mails - FETCH_NUM_FALLBACK,
                                               num_of_mails))
-        print "got total of {} mails to fetch".format(len(mail_ids))
         for num in mail_ids:
             _, msg_data = email_account_obj.fetch(num, '(RFC822)')
             actual_message = msg_data[0][1]
@@ -81,7 +82,7 @@ def fetch_emails(email_account_obj):
                                                       hours=DAYS_BACK * 24):
                 is_24_hours_verified = True
                 print "fetched email #{}".format(num)
-                yield num, actual_message
+                yield num, mail_obj.as_string()
     except Exception as err:
         print str(err)
         raise
@@ -105,23 +106,43 @@ def save_email_as_file(email_download_path, email_id, email_msg):
               'wt') as email_file:
         email_file.write(email_msg)
         print "email #{n} is at {p}".format(n=email_id,
-                                            p=email_download_path)
+                                            p=email_file.name)
 
+
+def connect_to_s3():
+    session = boto3.Session(aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+                            aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY)
+    s3 = session.resource('s3')
+    return s3
+
+
+def upload_mails_to_s3(email_id, email_message):
+    s3 = connect_to_s3()
+    object = s3.Object(config.BUCKET_NAME, config.EMAIL_DOWNLOAD_FILE_NAME.format(email_id))
+    object.put(Body=email_message)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '-d', '--download_path',
         help='Local path where emails will be downloaded to. Mandatory')
+    parser.add_argument(
+        '--upload',
+        action="store_true",
+        help='Upload the mails to a pre-defined S3 bucket'
+    )
     args = parser.parse_args()
     try:
-        download_path = args.download_path
-        assert download_path is not None, \
-            "You must provide a local path to download email messages"
+        assert args.upload or args.download_path, \
+            'You must provide a local path to download email messages or ' \
+            '--upload to upload files to S3 bucket'
         email_acc = email_login(config.EMAIL_ACCOUNT, config.EMAIL_PASSWORD)
         for fetched_email_id, fetched_email_message in fetch_emails(email_acc):
-            save_email_as_file(download_path, fetched_email_id,
-                               fetched_email_message)
+            if args.download_path:
+                save_email_as_file(args.download_path, fetched_email_id,
+                                   fetched_email_message)
+            if args.upload:
+                upload_mails_to_s3(fetched_email_id, fetched_email_message)
         print "Finished successfully"
     except Exception as ex:
         print ex.message
