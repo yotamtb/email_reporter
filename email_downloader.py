@@ -150,11 +150,11 @@ if __name__ == '__main__':
             'use --upload to upload files to S3 bucket'
         email_acc = email_login(config.EMAIL_ACCOUNT, config.EMAIL_PASSWORD)
         for fetched_email_id, fetched_email_message in fetch_emails(email_acc):
-            if args.download_path:
-                save_email_as_file(args.download_path, fetched_email_id,
-                                   fetched_email_message)
             if args.upload:
                 upload_mails_to_s3(fetched_email_id, fetched_email_message)
+            elif args.download_path:
+                save_email_as_file(args.download_path, fetched_email_id,
+                                   fetched_email_message)
         print "Finished successfully"
     except Exception as ex:
         print ex.message
