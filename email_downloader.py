@@ -120,22 +120,26 @@ def upload_mails_to_s3(email_id, email_message):
     s3 = connect_to_s3()
     object = s3.Object(config.BUCKET_NAME, config.EMAIL_DOWNLOAD_FILE_NAME.format(email_id))
     object.put(Body=email_message)
+    print "email #{n} is at {p}".format(n=email_id,
+                                        p=os.path.join('s3://',object.bucket_name,object.key))
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-d', '--download_path',
-        help='Local path where emails will be downloaded to. Mandatory')
-    parser.add_argument(
-        '--upload',
-        action="store_true",
-        help='Upload the mails to a pre-defined S3 bucket'
-    )
-    args = parser.parse_args()
     try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            '-d', '--download_path',
+            help='Local path where emails will be downloaded to. Mandatory')
+        parser.add_argument(
+            '--upload',
+            action="store_true",
+            help='Upload the mails to a pre-defined S3 bucket'
+        )
+        args = parser.parse_args()
+        args.upload = True
         assert args.upload or args.download_path, \
             'You must provide a local path to download email messages or ' \
-            '--upload to upload files to S3 bucket'
+            'use --upload to upload files to S3 bucket'
         email_acc = email_login(config.EMAIL_ACCOUNT, config.EMAIL_PASSWORD)
         for fetched_email_id, fetched_email_message in fetch_emails(email_acc):
             if args.download_path:
