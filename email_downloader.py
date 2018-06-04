@@ -110,6 +110,10 @@ def save_email_as_file(email_download_path, email_id, email_msg):
 
 
 def connect_to_s3():
+    """
+    opens a connection to S3 based on a given access key id and secret
+    :return: S3 open session object
+    """
     session = boto3.Session(aws_access_key_id=config.AWS_ACCESS_KEY_ID,
                             aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY)
     s3 = session.resource('s3')
@@ -117,6 +121,11 @@ def connect_to_s3():
 
 
 def upload_mails_to_s3(email_id, email_message):
+    """
+    uploads fetched email to s3
+    :param email_id: The id of the email as given from the server
+    :param email_message: The email message
+    """
     s3 = connect_to_s3()
     object = s3.Object(config.BUCKET_NAME, config.EMAIL_DOWNLOAD_FILE_NAME.format(email_id))
     object.put(Body=email_message)
