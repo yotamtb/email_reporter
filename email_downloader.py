@@ -8,9 +8,10 @@ import sys
 import boto3
 
 import config
+import db_handler
 
 # How many days back we need to fetch emails
-DAYS_BACK = 1
+DAYS_BACK = 2
 # How many emails to fetch in case we didn't find
 FETCH_NUM_FALLBACK = 10
 
@@ -65,12 +66,9 @@ def fetch_emails(email_account_obj):
                                            '(SINCE "{}")'.format(fetch_val))
         # If we didn't find any mails we will fetch the last y mails.
         # In that case we do not need to perform the x hours check
-        is_24_hours_verified, mail_ids = (False,
-                                          data[0].split()) or \
-                                         (True,
-                                          xrange(
-                                              num_of_mails - FETCH_NUM_FALLBACK,
-                                              num_of_mails))
+        is_24_hours_verified = False if (DAYS_BACK > 0 and data[0].split()) else True
+        mail_ids = data[0].split() or xrange(num_of_mails - FETCH_NUM_FALLBACK,
+                                             num_of_mails)
         for num in mail_ids:
             _, msg_data = email_account_obj.fetch(num, '(RFC822)')
             actual_message = msg_data[0][1]
@@ -82,13 +80,13 @@ def fetch_emails(email_account_obj):
                                                       hours=DAYS_BACK * 24):
                 is_24_hours_verified = True
                 print "fetched email #{}".format(num)
-                yield num, mail_obj.as_string()
+                yield {'id': num,
+                       'message': actual_message,
+                       'metadata': {header: mail_obj[header] for header in
+                                         ['subject', 'to', 'from', 'date']}}
     except Exception as err:
         print str(err)
         raise
-    finally:
-        email_account_obj.close()
-        email_account_obj.logout()
 
 
 def save_email_as_file(email_download_path, email_id, email_msg):
@@ -117,20 +115,54 @@ def connect_to_s3():
     session = boto3.Session(aws_access_key_id=config.AWS_ACCESS_KEY_ID,
                             aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY)
     s3 = session.resource('s3')
+    print "Connected to S3 successfully"
     return s3
 
 
-def upload_mails_to_s3(email_id, email_message):
+def upload_mails_to_s3(s3_session, email_id, email_message):
     """
     uploads fetched email to s3
     :param email_id: The id of the email as given from the server
     :param email_message: The email message
     """
-    s3 = connect_to_s3()
-    object = s3.Object(config.BUCKET_NAME, config.EMAIL_DOWNLOAD_FILE_NAME.format(email_id))
+    object = s3_session.Object(config.BUCKET_NAME, config.EMAIL_DOWNLOAD_FILE_NAME.format(email_id))
     object.put(Body=email_message)
+    s3_link = os.path.join('https://s3.amazonaws.com',object.bucket_name,object.key)
     print "email #{n} is at {p}".format(n=email_id,
-                                        p=os.path.join('s3://',object.bucket_name,object.key))
+                                        p=s3_link)
+    return s3_link
+
+
+def run(upload=False, report=False, local_path=None):
+    try:
+        email_acc = email_login(config.EMAIL_ACCOUNT, config.EMAIL_PASSWORD)
+        report_data = []
+        s3_link = None
+        if upload:
+            s3_session = connect_to_s3()
+        for fetched_email_data in fetch_emails(email_acc):
+            if upload:
+                s3_link = upload_mails_to_s3(s3_session,
+                                             fetched_email_data['id'],
+                                             fetched_email_data['message'])
+            else:
+                save_email_as_file(local_path,
+                                   fetched_email_data['id'],
+                                   fetched_email_data['message'])
+            if report:
+                fetched_email_data['metadata']['id'] = int(fetched_email_data['id'])
+                fetched_email_data['metadata']['s3_link'] = s3_link
+                report_data.append(fetched_email_data['metadata'])
+            if len(report_data) == config.REPORT_BULK_SIZE:
+                db_handler.upsert_report(report_data)
+        if report_data:
+            db_handler.upsert_report(report_data)
+    except Exception as e:
+        print str(e)
+        raise
+    finally:
+        email_acc.close()
+        email_acc.logout()
 
 
 if __name__ == '__main__':
@@ -144,17 +176,16 @@ if __name__ == '__main__':
             action="store_true",
             help='Upload the mails to a pre-defined S3 bucket'
         )
+        parser.add_argument(
+            '--report',
+            action="store_true",
+            help='Produce a report with the fetched emails details'
+        )
         args = parser.parse_args()
         assert args.upload or args.download_path, \
             'You must provide a local path to download email messages or ' \
             'use --upload to upload files to S3 bucket'
-        email_acc = email_login(config.EMAIL_ACCOUNT, config.EMAIL_PASSWORD)
-        for fetched_email_id, fetched_email_message in fetch_emails(email_acc):
-            if args.upload:
-                upload_mails_to_s3(fetched_email_id, fetched_email_message)
-            elif args.download_path:
-                save_email_as_file(args.download_path, fetched_email_id,
-                                   fetched_email_message)
+        run(upload=args.upload,report=args.report, local_path=args.download_path)
         print "Finished successfully"
     except Exception as ex:
         print ex.message
